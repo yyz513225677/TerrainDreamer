@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<!--
+  moon_jackal.launch — Bring up Gazebo moon world + Jackal with VLP-32 + IMU.
+
+  Topics produced:
+    /velodyne_points      (sensor_msgs/PointCloud2)   32-ring LiDAR
+    /imu/data             (sensor_msgs/Imu)           Jackal UM7 (VN-100 stand-in)
+    /ground_truth/odom    (nav_msgs/Odometry)         Gazebo p3d (for training)
+    /jackal_velocity_controller/odom                   wheel odom
+    /cmd_vel              (geometry_msgs/Twist)       input
+
+  Args:
+    env       — moon env name (mare / highland / cratered / boulder_field / rille)
+    gui       — launch gzclient (true for visual, false for headless training)
+    paused    — start paused (useful for deterministic resets)
+    x, y, yaw — spawn pose (default origin)
+-->
+<launch>
+
+  <arg name="env"    default="mare"/>
+  <arg name="gui"    default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="x"      default="0.0"/>
+  <arg name="y"      default="0.0"/>
+  <arg name="yaw"    default="0.0"/>
+
+  <!-- Inject our URDF extras (VLP-32 + ground-truth p3d) into Jackal. -->
+  <env name="JACKAL_URDF_EXTRAS"
+       value="$(find terrain_dreamer_bringup)/urdf/jackal_vlp32.urdf.xacro"/>
+
+  <!-- Register our models/ dir with Gazebo. -->
+  <env name="GAZEBO_MODEL_PATH"
+       value="$(find terrain_dreamer_bringup)/models:$(optenv GAZEBO_MODEL_PATH)"/>
+
+  <!-- Start Gazebo with the requested moon world. -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name"   value="$(find terrain_dreamer_bringup)/worlds/$(arg env).world"/>
+    <arg name="paused"       value="$(arg paused)"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui"          value="$(arg gui)"/>
+    <arg name="recording"    value="false"/>
+    <arg name="debug"        value="false"/>
+    <arg name="verbose"      value="false"/>
+  </include>
+
+  <!-- Spawn Jackal and its controllers. Reuses the stock launch from
+       jackal_gazebo so we stay compatible with Clearpath's control stack. -->
+  <include file="$(find jackal_gazebo)/launch/spawn_jackal.launch">
+    <arg name="x"       value="$(arg x)"/>
+    <arg name="y"       value="$(arg y)"/>
+    <arg name="z"       value="0.3"/>
+    <arg name="yaw"     value="$(arg yaw)"/>
+    <arg name="config"  value="base"/>
+    <arg name="joystick" value="false"/>
+  </include>
+
+</launch>

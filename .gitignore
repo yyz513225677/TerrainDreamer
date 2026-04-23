@@ -1,0 +1,48 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# --- Virtualenv ---
+venv/
+env/
+.venv/
+
+# --- catkin build artefacts ---
+ros_ws/build/
+ros_ws/devel/
+ros_ws/install/
+ros_ws/logs/
+ros_ws/.catkin_workspace
+
+# --- Training outputs ---
+checkpoints_auto/
+experiments/runs/
+runs/
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.log
+
+# --- Generated Gazebo worlds (reproducible via generate_*.py) ---
+ros_ws/src/terrain_dreamer_bringup/worlds/*.world
+ros_ws/src/terrain_dreamer_bringup/worlds/heightmaps/*.png
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Large binary data ---
+data/
+*.bag
+*.pcd
+*.bin

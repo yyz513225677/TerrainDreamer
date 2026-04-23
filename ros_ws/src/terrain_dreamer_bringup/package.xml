@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>terrain_dreamer_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    Gazebo bringup for TerrainDreamer — lunar Jackal UGV with VLP-32 LiDAR and
+    VN-100-equivalent IMU on procedurally generated Moon terrain. Used by the
+    Dreamer world-model training loop.
+  </description>
+  <maintainer email="yyz513225677@gmail.com">Leo</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>gazebo_plugins</exec_depend>
+  <exec_depend>jackal_description</exec_depend>
+  <exec_depend>jackal_control</exec_depend>
+  <exec_depend>jackal_gazebo</exec_depend>
+  <exec_depend>velodyne_description</exec_depend>
+  <exec_depend>velodyne_gazebo_plugins</exec_depend>
+  <exec_depend>hector_gazebo_plugins</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>gazebo_msgs</exec_depend>
+
+  <export>
+    <gazebo_ros gazebo_model_path="${prefix}/models"/>
+    <gazebo_ros gazebo_media_path="${prefix}/worlds"/>
+  </export>
+</package>

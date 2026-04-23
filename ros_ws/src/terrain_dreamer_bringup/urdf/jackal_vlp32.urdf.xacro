@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<!--
+  terrain_dreamer_bringup: Jackal URDF extras
+  ============================================
+  Additions loaded on top of jackal_description/jackal.urdf.xacro via
+  JACKAL_URDF_EXTRAS. Activate with:
+
+      export JACKAL_URDF_EXTRAS=$(rospack find terrain_dreamer_bringup)/urdf/jackal_vlp32.urdf.xacro
+
+  Adds:
+    - 32-ring Velodyne (HDL-32E macro used as VLP-32 stand-in) on mid_mount
+      Topic: /velodyne_points (sensor_msgs/PointCloud2)
+    - Ground-truth pose plugin (p3d) publishing /ground_truth/odom
+      Used by the training env for reward + spawn reset.
+
+  The stock Jackal UM7 IMU already publishes /imu/data — we keep that as the
+  VN-100-equivalent.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find velodyne_description)/urdf/HDL-32E.urdf.xacro"/>
+
+  <!-- GPU raycast (gpu=true) via libgazebo_ros_gpu_laser — far faster than
+       CPU raycast at 32 beams × 512 samples × 10 Hz. Requires an OpenGL-capable
+       display/GPU (works headless with xvfb or a real DISPLAY). -->
+  <xacro:HDL-32E parent="mid_mount" name="velodyne" topic="/velodyne_points"
+                 hz="10" lasers="32" samples="512"
+                 min_range="0.9" max_range="50.0" noise="0.008"
+                 min_angle="-3.1416" max_angle="3.1416" gpu="true">
+    <origin xyz="0 0 0.06" rpy="0 0 0"/>
+  </xacro:HDL-32E>
+
+  <!-- Ground-truth pose for training reward + reset. Publishes nav_msgs/Odometry
+       on /ground_truth/odom with no noise, directly from Gazebo. -->
+  <gazebo>
+    <plugin name="gazebo_ros_p3d" filename="libgazebo_ros_p3d.so">
+      <alwaysOn>true</alwaysOn>
+      <updateRate>50.0</updateRate>
+      <bodyName>base_link</bodyName>
+      <topicName>/ground_truth/odom</topicName>
+      <gaussianNoise>0.0</gaussianNoise>
+      <frameName>world</frameName>
+      <xyzOffset>0 0 0</xyzOffset>
+      <rpyOffset>0 0 0</rpyOffset>
+    </plugin>
+  </gazebo>
+
+</robot>
