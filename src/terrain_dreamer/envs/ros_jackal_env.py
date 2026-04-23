@@ -200,6 +200,49 @@ class RosJackalEnv(gym.Env):
             time.sleep(0.05)
         # Not an error — just log and continue; physics may never fully rest.
 
+    def _current_tilt(self) -> float:
+        """Max(|pitch|, |roll|) from the latest odom. Returns 0 if no data yet."""
+        with self._lock:
+            odom = self._latest_odom
+        if odom is None:
+            return 0.0
+        pitch, roll = _pitch_roll_from_quaternion(odom.pose.pose.orientation)
+        return max(abs(pitch), abs(roll))
+
+    def _find_level_spawn(
+        self,
+        x: float, y: float, yaw: float,
+        *,
+        tilt_ok: float = math.radians(20),
+        max_retries: int = 8,
+        nudge_m: float = 1.5,
+    ) -> Tuple[float, float, float]:
+        """Drop the rover at (x, y, yaw). If it settles tilted, nudge sideways
+        in a growing spiral until we find a flat spot or give up.
+
+        Returns the (x, y, yaw) that was ultimately used. The rover is left
+        teleported and settled at the returned pose.
+        """
+        attempt_x, attempt_y = x, y
+        for k in range(max_retries + 1):
+            self._teleport(attempt_x, attempt_y, yaw)
+            self._wait_until_settled(timeout=8.0, vel_thresh=0.15)
+            tilt = self._current_tilt()
+            if tilt < tilt_ok:
+                if k > 0:
+                    print(f"[spawn] level spot after {k} retries: "
+                          f"({attempt_x:+.1f},{attempt_y:+.1f}) tilt={math.degrees(tilt):.1f}°")
+                return (attempt_x, attempt_y, yaw)
+            # Growing spiral nudge: radius ∝ k, angle = golden-angle step
+            radius = nudge_m * (1 + 0.5 * k)
+            angle  = k * 2.39996  # golden angle (radians)
+            attempt_x = x + radius * math.cos(angle)
+            attempt_y = y + radius * math.sin(angle)
+
+        print(f"[spawn] WARN: could not find level spot near ({x:+.1f},{y:+.1f}) "
+              f"after {max_retries} tries — last tilt={math.degrees(tilt):.1f}°")
+        return (attempt_x, attempt_y, yaw)
+
     def _wait_for_fresh_data(self, timeout: float = 5.0):
         t0 = time.time()
         while time.time() - t0 < timeout:
@@ -313,19 +356,24 @@ class RosJackalEnv(gym.Env):
         if goal is not None:
             self._goal = np.array(goal, dtype=np.float32)
 
-        # Zero-cmd the rover, teleport well above the terrain, let it drop
-        # and settle. 12 m free-fall under -1.62 m/s² takes up to ~3.8 s, then
-        # we need time for the suspension to damp out. Poll the odom and wait
-        # until the rover is effectively stationary.
+        # Zero-cmd, drop the rover from 12 m, find a level landing spot.
+        # Without this, ~every spawn on a noisy heightmap lands on a slope
+        # and the first step() sees pitch/roll > flip threshold immediately.
         self._cmd_pub.publish(Twist())
-        self._teleport(spawn_x, spawn_y, spawn_yaw)
         self._wait_for_fresh_data(timeout=5.0)
-        self._wait_until_settled(timeout=8.0, vel_thresh=0.15)
+        actual_x, actual_y, actual_yaw = self._find_level_spawn(
+            spawn_x, spawn_y, spawn_yaw,
+        )
         self._step_count = 0
         self._prev_dist_to_goal = None
 
         obs = self._make_obs()
-        info = {"goal": self._goal.copy()}
+        info = {
+            "goal":        self._goal.copy(),
+            "spawn_xy":    np.array([actual_x, actual_y], dtype=np.float32),
+            "spawn_yaw":   float(actual_yaw),
+            "spawn_tilt_deg": math.degrees(self._current_tilt()),
+        }
         return obs, info
 
     def step(

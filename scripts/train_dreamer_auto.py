@@ -208,10 +208,13 @@ def run_phase(
     fall back to the stop-and-turn heuristic.
     """
     ep = EpisodeBuffer()
-    obs, _info = env.reset(options={
+    obs, reset_info = env.reset(options={
         "spawn_x": spawn[0], "spawn_y": spawn[1], "spawn_yaw": spawn[2],
         "goal": goal,
     })
+    # The env may have nudged the spawn to find a level spot. Use that actual
+    # (x, y) as the "home" target for the return phase, not the requested one.
+    actual_spawn_xy = reset_info.get("spawn_xy", np.array(spawn[:2], dtype=np.float32))
 
     # Initialize RSSM state if we have a model
     if model is not None:
@@ -284,6 +287,7 @@ def run_phase(
         "flipped": flipped,
         "final_pose": obs["pose"].copy(),
         "final_goal_dist": info.get("dist_to_goal", float("nan")),
+        "actual_spawn_xy": actual_spawn_xy,
     }
     return ep, info_out, state
 
@@ -573,6 +577,7 @@ def main():
 
             # -------- RETURNING phase --------------------------------------
             if going_info["reached"]:
+                home_xy = going_info["actual_spawn_xy"]
                 path = np.stack(going.path_xy, axis=0)
                 retrace = resample_path(path[::-1], RETURN_MIN_SPACING)
 
@@ -584,7 +589,7 @@ def main():
                 ret_flipped = False
                 for t in range(args.max_steps):
                     pose = obs["pose"]
-                    dist_home = float(np.linalg.norm(pose[:2] - np.array(spawn[:2])))
+                    dist_home = float(np.linalg.norm(pose[:2] - home_xy))
                     if dist_home < RETURN_ARRIVE_DIST:
                         ret_reached = True
                         break
@@ -600,7 +605,7 @@ def main():
                     next_obs, reward, terminated, truncated, info = env.step(action)
 
                     # Rewrite goal_obs so the buffer sample is consistent
-                    dx = spawn[0] - pose[0]; dy = spawn[1] - pose[1]
+                    dx = home_xy[0] - pose[0]; dy = home_xy[1] - pose[1]
                     home_dist = math.hypot(dx, dy)
                     g_obs = np.array([
                         np.clip(dx / 30.0, -1, 1),
