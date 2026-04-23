@@ -1,25 +1,30 @@
-# TerrainDreamer Dependencies
-# ============================
+# TerrainDreamer — Python runtime deps
+# ====================================
+# System deps (ROS Noetic, Gazebo Classic 11, Jackal simulator, Velodyne plugin,
+# xvfb) are installed via apt. See README.md → Environment.
 
-# Core
-numpy>=1.24.0
+# Core numeric / IO
+numpy>=1.24.0,<2.0      # pinned <2 to stay compatible with torch 2.3.1 ABI
 scipy>=1.10.0
 pyyaml>=6.0
+pillow>=10.0.0           # PNG heightmaps (ros_ws/.../generate_heightmaps.py)
 
-# Deep learning (CUDA 12.1)
+# Deep learning — CUDA 12.1 wheels
 # pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121
 torch==2.3.1
 
-# Simulator
-pybullet>=3.2.6            # Physics engine (PyBullet Moon UGV simulator)
-pygame>=2.6.0              # Merged single-window UI (3D + LiDAR + map + IMU)
-gymnasium>=0.29.0          # RL environment interface (LunarJackalEnv)
-stable-baselines3>=2.3.0   # PPO policy training (optional)
-
-# Real hardware interfaces (only needed for Jackal deployment)
-pyserial>=3.5              # VectorNav VN-100 IMU serial
-python-can>=4.0.0          # CAN bus (vehicle control output)
+# RL env interface
+gymnasium>=0.29.0
 
 # Training utilities
 tqdm>=4.65.0
 tensorboard>=2.12.0
+
+# ROS 1 Python bridge — rospy ships with ROS Noetic (apt), but these
+# pure-Python companions must live inside the venv for rospy to import.
+rospkg>=1.5
+catkin-pkg>=1.0
+empy>=3.3.4
+defusedxml>=0.7
+netifaces>=0.11
+pycryptodomex>=3.20
