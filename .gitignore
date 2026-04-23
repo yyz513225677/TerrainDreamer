@@ -33,13 +33,14 @@ runs/
 ros_ws/src/terrain_dreamer_bringup/worlds/*.world
 ros_ws/src/terrain_dreamer_bringup/worlds/heightmaps/*.png
 
-# --- OS / editor ---
+# --- OS / editor / tool state ---
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 *.swp
 *.swo
+.claude/
 
 # --- Large binary data ---
 data/
