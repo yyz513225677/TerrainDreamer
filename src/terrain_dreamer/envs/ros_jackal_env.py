@@ -182,6 +182,24 @@ class RosJackalEnv(gym.Env):
 
     # ---- Helpers ----------------------------------------------------------
 
+    def _wait_until_settled(self, timeout: float = 8.0, vel_thresh: float = 0.15):
+        """Block until the rover has essentially stopped moving after a
+        teleport. Prevents bogus flip detections on the first step of an
+        episode when the chassis is still bouncing from a drop-in."""
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            with self._lock:
+                odom = self._latest_odom
+            if odom is not None:
+                lv = odom.twist.twist.linear
+                av = odom.twist.twist.angular
+                speed  = math.sqrt(lv.x * lv.x + lv.y * lv.y + lv.z * lv.z)
+                omega  = math.sqrt(av.x * av.x + av.y * av.y + av.z * av.z)
+                if speed < vel_thresh and omega < vel_thresh:
+                    return
+            time.sleep(0.05)
+        # Not an error — just log and continue; physics may never fully rest.
+
     def _wait_for_fresh_data(self, timeout: float = 5.0):
         t0 = time.time()
         while time.time() - t0 < timeout:
@@ -259,11 +277,16 @@ class RosJackalEnv(gym.Env):
         p.orientation = Quaternion(x=0.0, y=0.0, z=sy, w=cy)
         return p
 
-    def _teleport(self, x: float, y: float, yaw: float, z: float = 0.3):
+    def _teleport(self, x: float, y: float, yaw: float, z: float = 12.0):
+        """Teleport the rover. Z defaults well above the heightmap so the rover
+        drops cleanly onto the surface (heightmap Z scale is 10 m)."""
         req = SetModelStateRequest()
         ms = ModelState()
         ms.model_name = self.model_name
         ms.pose = self._pose_matrix((x, y, z), yaw)
+        # Zero velocities so the previous mission's motion doesn't leak through.
+        ms.twist.linear.x = ms.twist.linear.y = ms.twist.linear.z = 0.0
+        ms.twist.angular.x = ms.twist.angular.y = ms.twist.angular.z = 0.0
         ms.reference_frame = "world"
         req.model_state = ms
         self._set_state(req)
@@ -290,12 +313,14 @@ class RosJackalEnv(gym.Env):
         if goal is not None:
             self._goal = np.array(goal, dtype=np.float32)
 
-        # Zero-cmd the rover, teleport, give sim a moment to settle.
+        # Zero-cmd the rover, teleport well above the terrain, let it drop
+        # and settle. 12 m free-fall under -1.62 m/s² takes up to ~3.8 s, then
+        # we need time for the suspension to damp out. Poll the odom and wait
+        # until the rover is effectively stationary.
         self._cmd_pub.publish(Twist())
         self._teleport(spawn_x, spawn_y, spawn_yaw)
-        time.sleep(0.3)
-
         self._wait_for_fresh_data(timeout=5.0)
+        self._wait_until_settled(timeout=8.0, vel_thresh=0.15)
         self._step_count = 0
         self._prev_dist_to_goal = None
 

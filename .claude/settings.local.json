@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip3 install:*)",
+      "Bash(python3 -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu)",
+      "Bash(python3 -m pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu)",
+      "Bash(python3 -m pip install typing-extensions==4.7.1)",
+      "Bash(python3 -m pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu --no-deps)",
+      "Bash(python3 -m pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu --no-build-isolation)",
+      "Bash(python3 -c \"import torch; print\\(torch.__version__\\)\")",
+      "Bash(python3 -m pip install sympy filelock networkx fsspec)",
+      "Bash(python3 scripts/train_world_model.py --data_dir data/sequences --epochs 1 --batch_size 2)",
+      "Bash(ps -p 3592498 -o pid,stat,cmd)",
+      "Bash(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader)"
+    ]
+  }
+}

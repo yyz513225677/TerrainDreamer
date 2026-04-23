@@ -64,6 +64,21 @@ class PointCloudProcessor:
         # 2. Voxel downsampling
         points = self._voxel_downsample(points)
 
+        # Empty after cropping — return an empty ProcessedCloud so the caller
+        # can pad to its own N. Happens e.g. on the very first sim tick when
+        # the LiDAR hasn't produced a scan yet.
+        if points.shape[0] == 0:
+            return ProcessedCloud(
+                timestamp=scan.timestamp,
+                features=np.zeros((0, 8), dtype=np.float32),
+                xyz=np.zeros((0, 3), dtype=np.float32),
+                normals=np.zeros((0, 3), dtype=np.float32),
+                intensity=np.zeros((0,), dtype=np.float32),
+                height_above_ground=np.zeros((0,), dtype=np.float32),
+                is_ground=np.zeros((0,), dtype=bool),
+                num_points=0,
+            )
+
         # 3. Ground segmentation via RANSAC
         is_ground, ground_plane = self._segment_ground(points[:, :3])
 
