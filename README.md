@@ -1,218 +1,201 @@
 # TerrainDreamer
 
-World-model-based autonomous navigation for a lunar UGV.
-A Clearpath Jackal rover learns to drive to goals `(x, y)` on procedurally
-generated Moon terrain using a 32-ring LiDAR + IMU and a DreamerV3-style
-RSSM world model. Training is fully online in **Gazebo Classic 11 + ROS 1
-Noetic**.
+**Demonstration-Anchored Model-Based RL for Lunar Rover Navigation**
 
-## Architecture
+A DreamerV3-based, demonstration-anchored, hierarchical model-based
+reinforcement-learning framework for safe Unmanned Ground Vehicle
+(UGV) navigation on unstructured, low-visibility off-road terrain.
+A Clearpath J100 rover learns to drive to a goal flag `(x, y)` and
+return to the spawn point on procedurally-generated lunar
+south-pole heightmaps in **Gazebo Sim Harmonic + ROS 2 Jazzy**.
 
-```
-Goal (x, y)
-     │
-     ▼
-┌─────────────────────────────────────────────────┐
-│                  TerrainDreamer                 │
-│                                                 │
-│  LiDAR (32-ring)  ──▶ PointCloudProcessor       │
-│  IMU   (VN-100)   ──▶ EgoState                  │
-│  /ground_truth/odom ─▶ pose (reward + retrace)  │
-│                          │                      │
-│                          ▼                      │
-│              TerrainEncoder (PointPillars)      │
-│                          │                      │
-│                          ▼                      │
-│                  RSSM World Model               │
-│                  h_t ──▶ h_{t+1}                │
-│                          │                      │
-│                          ▼                      │
-│         DreamerActor  +  DreamerCritic          │
-│      (imagination-trained, goal-conditioned)    │
-│                          │                      │
-│                          ▼                      │
-│              /cmd_vel  (lin_vel, ang_vel)       │
-└─────────────────────────────────────────────────┘
-```
+| Configuration | Landscape | Rugged | Extreme |
+| --- | --- | --- | --- |
+| **TerrainDreamer (full)** | **98.4 ± 1.7 %** | **97.6 ± 2.7 %** | **75.9 ± 4.7 %** |
+| Vanilla DreamerV3 (B1) | — | — | 51.4 ± 6.7 % |
 
-| Component | Details |
-|---|---|
-| **Simulator** | Gazebo Classic 11, Moon gravity `-1.62 m/s²`, heightmap terrain + scattered rocks |
-| **Robot**     | Clearpath Jackal (stock URDF + VLP-32 + ground-truth p3d) |
-| **LiDAR**     | Velodyne HDL-32E stand-in for VLP-32: 32 rings × 512 samples @ 10 Hz, GPU raycast |
-| **IMU**       | Jackal UM7 → VN-100 role on `/imu/data` |
-| **World model** | RSSM — deter 512 + stoch 64×64 latent state |
-| **Encoder**   | PointPillars — `[N, 8]` features → `[256]` embed |
-| **Actor**     | Gaussian MLP on `(RSSM state ‖ goal_obs_4d)` → `(lin_vel, ang_vel)` |
-| **Critic**    | EMA-target value network for imagination-based TD learning |
-| **goal_obs**  | `(dx_norm, dy_norm, dist_norm, heading_err_norm)`, each ∈ [−1, 1] |
+5 seeds per terrain, 50 episodes per seed. Δ on extreme vs. B1:
+**+24.5 percentage points**.
 
 ---
 
-## Lunar Simulator (Gazebo)
+## Contributions
 
-### Environments
+1. **Demonstration-anchored actor loss (C1).** A heavy
+   behaviour-cloning term against a programmatic flag-seeking
+   demonstrator down-weights the standard imagined-return loss and
+   eliminates critic divergence under non-smooth shaping rewards.
+2. **Hierarchical sub-goal action space (C2).** The actor emits a
+   signed polar sub-goal `(θ, r)` that a fixed P-controller converts
+   into a TwistStamped command at 10 Hz. `sign(r)` natively encodes
+   reverse manoeuvres.
+3. **Triple-source safety filter (C3).** A priority hierarchy of
+   interrupts (anti-rollover, stuck recovery, slope detour,
+   post-commit, BEV detectors) gated by **multi-source agreement**
+   from LiDAR BEV, IMU dynamics, and recent travel-path progress.
+   The **progress gate** suppresses every non-safety interrupt while
+   the rover is gaining ground on the goal.
+4. **Demo distillation (C4).** Whenever a safety interrupt overrides
+   the actor, the executed motor command is reverse-mapped back into
+   the hierarchical action space and stored in the replay buffer, so
+   the world model sees dynamics-consistent transitions and behaviour
+   cloning treats interrupt-driven manoeuvres as expert
+   demonstrations.
 
-| World | Terrain character |
-|---|---|
-| `mare`          | Smooth volcanic plains — easiest |
-| `highland`      | Rugged hills and ridgelines |
-| `cratered`      | Impact craters, ejecta rims |
-| `boulder_field` | Dense scattered rock clusters |
-| `rille`         | Elongated channel cut across the map |
+---
 
-Worlds are procedurally generated:
-- **Heightmaps** (513×513 PNG, `[0, 10 m]` Z-scale) via fBm noise + craters + mesas + rilles
-- **Rocks** scattered per-env as static spheres with deterministic seeds
-- **Lighting** tuned for the Moon (strong directional sun, low ambient)
+## System layout
 
-Regenerate everything:
+```
+sensors                CRATER core (C1, C2)              filter + distill           robot
+─────────              ─────────────────────────         ───────────────            ──────
+LiDAR ─┐                Encoder ─▶ RSSM (h_t, s_t) ──┐
+IMU   ─┼─▶ encoder ──▶ Actor π_φ   Critic V_ψ        ├─▶ Triple-source ──▶ P-ctrl ──▶ Gazebo
+pose  ─┘                Demonstrator π* ─────────────┘   safety filter      (v, ω)     (J100)
+                                                         (C3)
+                              ▲                                │
+                              │      executed (ṽ, ω̃)           │
+                              └──── reverse-map ─── buffer ◀───┘
+                                       (C4)
+```
+
+---
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `crater/`                       | Core DreamerV3-derived Python package (RSSM, actor / critic, BC heads, safety shield, fusion encoder) |
+| `scripts/train_crater_ros.py`   | Single-process ROS 2 + Gazebo + DreamerV3 trainer |
+| `scripts/run_seeds.sh`          | 5-seed sweep runner with full per-seed clean restart |
+| `scripts/run_ablations.sh`      | B1 / A1 / A2 / A3 ablation runner |
+| `scripts/run_paper_experiments_v2.sh` | The full 6-step paper experiment queue |
+| `scripts/build_extreme_terrain.py`, `build_rugged_terrain.py`, `build_varied_world.py` | Procedural heightmap generators |
+| `lunar_south_pole_gazebo/`      | Gazebo Sim Harmonic world / SDF / launch files + heightmap pipeline |
+| `lunar_south_pole_gazebo/ros2_ws/src/lunar_south_pole_gazebo/` | ROS 2 package (mission node, dreamer-interface node, launch) |
+| `jackal_dreamer_dashboard/`     | Real-time training dashboard (React + ROS 2 web bridge) |
+| `src/terrain_dreamer/`          | Earlier-vintage env + world-model code retained for reference |
+| `configs/`, `docs/`             | Configuration files and design notes |
+
+---
+
+## Hardware / software stack
+
+| Layer        | Choice |
+| --- | --- |
+| OS / kernel  | Ubuntu 22.04 |
+| ROS          | ROS 2 Jazzy |
+| Simulator    | **Gazebo Sim Harmonic** (gz-sim 8) with `bullet-featherstone` physics at 1 kHz, `real_time_factor = 1.0` |
+| Rover model  | Off-the-shelf Clearpath J100 SDF |
+| LiDAR        | Velodyne VLP-32 (360°, 32 rings, ±30° vertical, 20 Hz) |
+| IMU          | VectorNav VN-100 (100 Hz) |
+| Control      | 10 Hz TwistStamped on `/j100_0001/cmd_vel` |
+| World model  | DreamerV3 RSSM: 1024-D deterministic + 32×32 categorical stochastic |
+| Compute      | Single NVIDIA RTX-class GPU |
+
+The simulator engine and rover model are upstream open-source
+artefacts; **we did not modify them**. The contributions of this work
+are at the algorithm layer (above) and at the world-content layer
+(procedurally-generated heightmaps under `lunar_south_pole_gazebo/`).
+
+---
+
+## Terrains
+
+Three procedurally-generated 100 m × 100 m heightmaps (world
+coordinates `x, y ∈ [−50, +50] m`, elevation `z ∈ [0, 4] m`,
+513 × 513 pixel grid):
+
+| Terrain | Slope `p_99` | Blocked area | Description |
+| --- | --- | --- | --- |
+| Landscape | ≈ 5° (median) | ≈ 0 % | Gentle fractal terrain; no craters or boulders |
+| Rugged    | 32°           | 7.3 %  | Multi-octave noise + 6 impact craters + river bed + 70 boulders |
+| Extreme   | **52.7°**     | **22.0 %** | 8 deep craters with raised rims + eroded trench + 120 large boulders; ±3 m flat clearance only at the spawn point |
+
+---
+
+## Quick start
 
 ```bash
-python3 ros_ws/src/terrain_dreamer_bringup/scripts/generate_heightmaps.py
-python3 ros_ws/src/terrain_dreamer_bringup/scripts/generate_worlds.py
+# 1. Build the Gazebo workspace once
+cd lunar_south_pole_gazebo/ros2_ws
+colcon build --packages-select lunar_south_pole_gazebo
+source install/setup.bash
+
+# 2. Generate the heightmaps + SDF for a terrain
+cd ../..
+python3 scripts/build_extreme_terrain.py     # or _rugged_terrain.py
+python3 scripts/build_varied_world.py --terrain extreme
+
+# 3. Launch a single training run
+TERRAIN=extreme HEADLESS=1 VIEWER=0 \
+  python3 scripts/train_crater_ros.py
+
+# 4. Or run the full 5-seed sweep with auto-restart between seeds
+TERRAIN=extreme N_SEEDS=5 EPISODES_PER_ITER=50 \
+  bash scripts/run_seeds.sh
 ```
 
-### Topics published by `moon_jackal.launch`
-
-| Topic | Type | Source |
-|---|---|---|
-| `/velodyne_points`   | `sensor_msgs/PointCloud2` | VLP-32 (GPU raycast) |
-| `/imu/data`          | `sensor_msgs/Imu`         | Jackal UM7 |
-| `/ground_truth/odom` | `nav_msgs/Odometry`       | Gazebo p3d plugin |
-| `/jackal_velocity_controller/odom` | `nav_msgs/Odometry` | wheel odom |
-| `/cmd_vel`           | `geometry_msgs/Twist`     | **input** (RL action) |
-
----
-
-## Quickstart
+A read-only Gazebo GUI client can be attached at any time without
+affecting the headless training server:
 
 ```bash
-# 1. Build the ROS workspace (one-time)
-cd ros_ws && catkin_make && cd ..
-
-# 2. Python deps
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 3. Generate moon worlds (one-time)
-python3 ros_ws/src/terrain_dreamer_bringup/scripts/generate_heightmaps.py
-python3 ros_ws/src/terrain_dreamer_bringup/scripts/generate_worlds.py
-
-# 4. Launch autonomous training (headless by default)
-./run_auto.sh
-./run_auto.sh --gui                     # show Gazebo GUI
-./run_auto.sh --env boulder_field       # pick a harder world
-./run_auto.sh --resume checkpoints_auto/ckpt_latest.pt
-```
-
-`run_auto.sh` handles all ROS env-var plumbing:
-
-- sources `/opt/ros/noetic/setup.bash` and `ros_ws/devel/setup.bash`
-- exports `JACKAL_URDF_EXTRAS` and `GAZEBO_MODEL_PATH`
-- wraps headless Gazebo in `xvfb-run` so GPU LiDAR raycast has a display
-- launches `moon_jackal.launch`, waits for `/ground_truth/odom`, then starts
-  `scripts/train_dreamer_auto.py`
-- cleans up `gzserver`/`gzclient`/`rosmaster` on exit or Ctrl-C
-
----
-
-## Autonomous Training Loop
-
-Each mission:
-
-```
-1. Sample goal         — annulus [0.6·dmax, dmax] at random bearing from origin
-2. GOING phase         — actor drives to goal; heuristic stop-and-turn used during warmup
-      • step data (features, action, reward, continue, goal_obs) streamed to replay buffer
-      • flip → −50 reward, terminate; timeout → truncate
-3. If goal reached:
-      a. RETURNING phase — pure-pursuit retraces the GOING waypoints in reverse
-      b. Return trajectory also stored (with goal = origin)
-4. If goal missed:
-      HER relabel — recompute goal_obs + shaping against the final achieved pose
-5. World-model update  — RSSM + encoder + reward/continue heads on sampled sequences
-6. Actor-critic update — imagination rollouts (DreamerV3 λ-return)
-7. Curriculum update   — rolling success rate adjusts dmax:
-      > 0.7 → dmax += 1 m   (cap 25 m)
-      < 0.3 → dmax -= 1 m   (floor 4 m)
-8. Checkpoint every 25 missions → checkpoints_auto/ckpt_mNNNNN.pt
-```
-
-### Key flags of `scripts/train_dreamer_auto.py`
-
-| Flag | Default | Description |
-|---|---|---|
-| `--total_missions` | `500` | Stop after N complete missions |
-| `--max_steps`      | `600` | Cap per GOING or RETURNING phase |
-| `--warmup_missions`| `10`  | Heuristic-only data collection before engaging the actor |
-| `--seq_len`        | `16`  | Sub-sequence length for world-model training |
-| `--batch_size`     | `16`  | Model update batch size |
-| `--imagine_h`      | `15`  | Imagination rollout horizon |
-| `--updates_per_train` | `4` | Gradient updates per mission (when buffer is ready) |
-| `--use_actor_prob_end` | `0.85` | Final probability of using the actor vs heuristic |
-| `--checkpoint_dir` | `checkpoints_auto` | Output directory |
-| `--resume PATH`    | —     | Resume from a `.pt` checkpoint |
-
-### Log output (`checkpoints_auto/training_log.csv`)
-
-Columns: `mission, phase, steps, reward, reached, flipped, goal_dist_max,
-success_rate, wm_total, actor_loss, critic_loss, imagined_return`.
-
----
-
-## Project Structure
-
-```
-terrain_dreamer/
-├── README.md
-├── requirements.txt
-├── run_auto.sh                         # ROS + training orchestrator
-│
-├── ros_ws/                             # catkin workspace
-│   └── src/
-│       └── terrain_dreamer_bringup/
-│           ├── package.xml
-│           ├── CMakeLists.txt
-│           ├── launch/moon_jackal.launch
-│           ├── urdf/jackal_vlp32.urdf.xacro   # VLP-32 + p3d plugin
-│           ├── worlds/<env>.world             # generated per env
-│           ├── worlds/heightmaps/<env>.png    # generated per env
-│           ├── models/                        # custom Gazebo models
-│           └── scripts/
-│               ├── generate_heightmaps.py
-│               └── generate_worlds.py
-│
-├── src/terrain_dreamer/                # Python package
-│   ├── envs/
-│   │   ├── ros_jackal_env.py           # Gymnasium wrapper over ROS + Gazebo
-│   │   └── sensors/velodyne_vlp32.py   # raw VLP-32C driver + PointCloud dataclass
-│   ├── preprocessing/
-│   │   ├── point_cloud_processor.py    # raw scan → [N, 8] pillar features
-│   │   └── terrain_encoder.py          # PointPillars encoder → 256-d embed
-│   ├── world_model/
-│   │   ├── rssm.py                     # Recurrent State Space Model
-│   │   ├── terrain_dreamer_model.py    # encoder + RSSM + decoder heads
-│   │   └── dreamer_policy.py           # DreamerActor, DreamerCritic, imagine_train
-│   ├── training/
-│   │   └── dreamer_buffer.py           # sequence replay buffer
-│   ├── evaluation/ visualization/ policy/ utils/
-│
-├── scripts/
-│   └── train_dreamer_auto.py           # autonomous Dreamer training loop
-│
-├── checkpoints_auto/                   # checkpoints + training_log.csv + gazebo.log
-└── venv/                               # Python virtualenv
+bash scripts/capture_gz_screenshot.sh
 ```
 
 ---
 
-## Environment
+## Ablation protocol
 
-- Ubuntu 20.04
-- ROS 1 Noetic + Gazebo Classic 11
-- Python 3.8 in `venv/`
-- CUDA 12.1, PyTorch 2.3.1+cu121
-- apt packages: `ros-noetic-jackal-simulator`, `ros-noetic-velodyne-simulator`,
-  `ros-noetic-hector-gazebo-plugins`, `xvfb`
+| Tag | Description |
+| --- | --- |
+| **B1** | Vanilla DreamerV3 — no BC anchor, no hierarchical action, no safety filter |
+| **A1** | TerrainDreamer with the triple-source safety filter disabled |
+| **A2** | TerrainDreamer with demo distillation disabled (the actor's intended sub-goal is stored verbatim) |
+| **A3** | TerrainDreamer with the BC anchor disabled (`λ_BC = 0`) |
+
+Run the full ablation queue with:
+
+```bash
+bash scripts/run_paper_experiments_v2.sh   # 6 steps, ~150 h on one GPU
+```
+
+The queue runs Landscape and Rugged sweeps under the final algorithm,
+then B1, A1, A2, A3 on the extreme terrain. A
+`paper_post_ablation_watcher.sh` daemon patches the ablation table
+and regenerates the figures every time a step completes.
+
+---
+
+## Reproducibility
+
+The full algorithm, evaluation protocol, hyper-parameters, ROS 2
+launch files, and figure-generation scripts are all in this
+repository. The paper itself (LaTeX source, figures, BibTeX) is
+intentionally excluded from the public repo and kept in a separate
+private workspace.
+
+---
+
+## Citation
+
+If TerrainDreamer is useful in your research, please cite (BibTeX
+entry will be updated once the paper is officially accepted):
+
+```bibtex
+@article{yang2026terraindreamer,
+  title   = {{TerrainDreamer}: Demonstration-Anchored Model-Based RL
+             for Lunar Rover Navigation},
+  author  = {Yang, Yongzhi and Ricks, Kenneth},
+  journal = {IEEE Transactions on Intelligent Vehicles (submitted)},
+  year    = {2026}
+}
+```
+
+---
+
+## Acknowledgements
+
+Built on the open-source DreamerV3 reference, Gazebo Sim Harmonic,
+ROS 2 Jazzy, and the Clearpath J100 SDF model. Heightmap pipeline
+inspired by the OmniLRS lunar simulator.
