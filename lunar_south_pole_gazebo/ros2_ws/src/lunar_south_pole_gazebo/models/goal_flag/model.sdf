@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<!--
+  Goal flag — 2 m white pole with a coloured rectangular cloth at the
+  top. Visible from any reasonable third-person camera in gz GUI.
+  The model is <static>true</static> so physics doesn't tip it.
+  Colour is set per-instance by `mission_manager_node` re-writing the
+  SDF string at spawn time (this file is the template).
+-->
+<sdf version="1.10">
+  <model name="goal_flag">
+    <static>true</static>
+    <link name="link">
+      <pose>0 0 0 0 0 0</pose>
+      <!-- pole -->
+      <visual name="pole">
+        <pose>0 0 1.0 0 0 0</pose>
+        <geometry>
+          <cylinder><radius>0.04</radius><length>2.0</length></cylinder>
+        </geometry>
+        <material>
+          <ambient>0.95 0.95 0.95 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+        </material>
+      </visual>
+      <!-- flag cloth -->
+      <visual name="cloth">
+        <pose>0.30 0 1.65 0 0 0</pose>
+        <geometry>
+          <box><size>0.60 0.02 0.40</size></box>
+        </geometry>
+        <material>
+          <ambient>0.96 0.78 0.10 1</ambient>
+          <diffuse>0.96 0.78 0.10 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+          <emissive>0.20 0.16 0.02 1</emissive>
+        </material>
+      </visual>
+      <!-- base disc for visibility -->
+      <visual name="base">
+        <pose>0 0 0.01 0 0 0</pose>
+        <geometry>
+          <cylinder><radius>0.25</radius><length>0.02</length></cylinder>
+        </geometry>
+        <material>
+          <ambient>0.20 0.20 0.20 1</ambient>
+          <diffuse>0.30 0.30 0.30 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

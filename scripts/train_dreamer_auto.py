@@ -45,6 +45,7 @@ from terrain_dreamer.world_model.dreamer_policy import (
     imagine_train,
 )
 from terrain_dreamer.world_model.rssm import RSSMState
+from terrain_dreamer.training.flip_debug import FlipDebugRecorder
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +57,26 @@ ACTION_DIM = 2
 GOAL_DIM = 4
 
 # Curriculum
-INIT_GOAL_DIST = 4.0       # m — start easy
-MAX_GOAL_DIST  = 25.0      # m — eventual reach
-CURR_WIN       = 20        # episodes in the rolling-success window
-CURR_UP_TH     = 0.7       # grow radius if success-rate > this
-CURR_DOWN_TH   = 0.3       # shrink radius if success-rate < this
-CURR_STEP_M    = 1.0
+INIT_GOAL_DIST = 2.0       # m — start very easy; was 4.0, but a 4 m floor
+                           # left a stuck actor with no way to regress to
+                           # success and bootstrap signal.
+MAX_GOAL_DIST  = 50.0      # m — eventual reach (bumped from 25 so the
+                           # curriculum can grow to a full half-world goal)
+CURR_WIN       = 30        # episodes in the rolling-success window
+                            # (was 20 — bumped after m75 catastrophic collapse
+                            # showed too-fast curriculum ramp 2→50 m in 50 ep)
+CURR_UP_TH     = 0.80      # grow radius if success-rate > this (was 0.70)
+CURR_DOWN_TH   = 0.30      # shrink radius if success-rate < this
+CURR_STEP_M    = 0.5       # was 1.0; halved so the curriculum needs ~2× as
+                            # many wins to reach the same goal distance
+CURR_DOWN_FLOOR_RATIO = 0.6 # never shrink below 60% of the best-mastered
+                            # dmax; prevents the "collapse all the way to
+                            # INIT_GOAL_DIST" pattern where the rover can
+                            # never see a non-trivial success again
+COLLAPSE_REACH_WIN  = 25   # consecutive missions with reach=0 → declare
+COLLAPSE_AUTO_HALT  = True # ...collapse and exit (user resumes from clean
+                            #    ckpt with --resume); avoids burning hours
+                            #    on already-degenerate buffer data
 
 # Return phase
 RETURN_LOOKAHEAD = 1.5     # m, pure-pursuit lookahead
@@ -186,6 +201,51 @@ class EpisodeBuffer:
         }
 
 
+def split_episode_at_resets(ep: "EpisodeBuffer") -> List["EpisodeBuffer"]:
+    """Break an episode into sub-episodes wherever continues[t]==0.
+
+    Each sub-episode ends at the reset step (inclusive) so the
+    world-model never sees the discontinuous transition across the reset.
+    Short sub-episodes are kept here; the replay buffer will drop any that
+    are shorter than its seq_len.
+    """
+    if len(ep) == 0:
+        return []
+    segments: List[EpisodeBuffer] = []
+    cur = EpisodeBuffer()
+    for t in range(len(ep)):
+        cur.features .append(ep.features[t])
+        cur.actions  .append(ep.actions[t])
+        cur.rewards  .append(ep.rewards[t])
+        cur.continues.append(ep.continues[t])
+        cur.goal_obs .append(ep.goal_obs[t])
+        cur.path_xy  .append(ep.path_xy[t])
+        if ep.continues[t] == 0.0 and t < len(ep) - 1:
+            segments.append(cur)
+            cur = EpisodeBuffer()
+    if len(cur) > 0:
+        segments.append(cur)
+    return segments
+
+
+def _push_episode(buffer: DreamerReplayBuffer, ep: "EpisodeBuffer") -> int:
+    """Split at resets and push each sub-episode. Returns number accepted."""
+    accepted = 0
+    for seg in split_episode_at_resets(ep):
+        data = seg.finalize()
+        if data is None:
+            continue
+        if buffer.add_episode(
+            features  = data["features"],
+            actions   = data["actions"],
+            rewards   = data["rewards"],
+            continues = data["continues"],
+            goal_obs  = data["goal_obs"],
+        ):
+            accepted += 1
+    return accepted
+
+
 def run_phase(
     env: RosJackalEnv,
     processor: PointCloudProcessor,
@@ -200,6 +260,8 @@ def run_phase(
     use_actor_prob: float,
     state: Optional[RSSMState] = None,
     model: Optional[TerrainDreamerModel] = None,
+    debug_rec: Optional[FlipDebugRecorder] = None,
+    debug_mission: int = 0,
 ) -> Tuple[EpisodeBuffer, Dict, RSSMState]:
     """Run a single GOING phase. Returns (episode buffer, info, final RSSM state).
 
@@ -215,6 +277,10 @@ def run_phase(
     # The env may have nudged the spawn to find a level spot. Use that actual
     # (x, y) as the "home" target for the return phase, not the requested one.
     actual_spawn_xy = reset_info.get("spawn_xy", np.array(spawn[:2], dtype=np.float32))
+
+    if debug_rec is not None:
+        debug_rec.begin(mission=debug_mission,
+                        spawn_xy=actual_spawn_xy, goal_xy=goal)
 
     # Initialize RSSM state if we have a model
     if model is not None:
@@ -262,12 +328,25 @@ def run_phase(
         done = terminated or truncated
         total_reward += reward
 
+        # Mark flip-recovery steps as sub-episode boundaries (continues=0). The
+        # env teleports the rover on flip, which creates a physics
+        # discontinuity the RSSM can't model — treat that step as a terminal
+        # so split_episode_at_resets() drops the cross-teleport transition.
         ep.features .append(feats_np)
         ep.actions  .append(action.copy())
         ep.rewards  .append(float(reward))
-        ep.continues.append(0.0 if terminated else 1.0)
+        ep.continues.append(0.0 if (terminated or info.get("flipped")) else 1.0)
         ep.goal_obs .append(obs["goal_obs"].copy())
         ep.path_xy  .append(obs["pose"][:2].copy())
+
+        if debug_rec is not None:
+            debug_rec.step(
+                pose_xy=next_obs["pose"][:2],
+                pitch_roll=env.latest_pitch_roll(),
+                action=action,
+                reward=float(reward),
+                dist=float(info.get("dist_to_goal", float("nan"))),
+            )
 
         if model is not None and not use_heuristic:
             prev_action = torch.from_numpy(action[None]).to(device)
@@ -312,10 +391,10 @@ def her_relabel(ep: EpisodeBuffer, new_goal: np.ndarray) -> EpisodeBuffer:
             0.0,
         ], dtype=np.float32)
 
-        shaping = 0.0 if prev_dist is None else (prev_dist - dist) * 2.0
+        shaping = 0.0 if prev_dist is None else (prev_dist - dist) * 4.0
         prev_dist = dist
         reached = dist < 0.8 and t == len(poses) - 1
-        reward = shaping + (25.0 if reached else 0.0)
+        reward = shaping - 0.03 + (15.0 if reached else 0.0)
         cont = 0.0 if reached else 1.0
 
         out.features .append(ep.features[t])
@@ -359,7 +438,7 @@ def train_step(
     losses = model.training_loss(feats_t, acts_t, rews_t, conts_t)
     model_opt.zero_grad()
     losses["total"].backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 100.0)
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
     model_opt.step()
 
     # --- Posteriors for imagination start states ---
@@ -377,6 +456,7 @@ def train_step(
         start_goals=goal_t,
         device=device,
         H=imagine_horizon,
+        entropy_scale=1e-3,
     )
 
     out = {f"wm/{k}": float(v.item() if torch.is_tensor(v) else v)
@@ -393,8 +473,13 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--total_missions", type=int, default=500)
-    ap.add_argument("--max_steps",      type=int, default=600,
-                    help="max steps per GOING or RETURNING phase")
+    ap.add_argument("--max_steps",      type=int, default=1500,
+                    help="max steps per GOING or RETURNING phase. 50 m goals "
+                         "at 0.5 m/s need ≥1000 steps, plus margin.")
+    ap.add_argument("--start-dmax", type=float, default=None,
+                    help="Force the curriculum's starting dmax (m). Without "
+                         "this, dmax is restored from the checkpoint or set "
+                         "to INIT_GOAL_DIST.")
     ap.add_argument("--train_every_episodes", type=int, default=1)
     ap.add_argument("--updates_per_train",    type=int, default=4)
     ap.add_argument("--batch_size",  type=int, default=16)
@@ -407,6 +492,12 @@ def main():
     ap.add_argument("--use_actor_prob_end",   type=float, default=0.85)
     ap.add_argument("--checkpoint_dir", default="checkpoints_auto")
     ap.add_argument("--resume", default=None, help="path to .pt to resume from")
+    ap.add_argument("--env_name", default=os.environ.get("TD_ENV_NAME", "mare"),
+                    help="Gazebo world name (mare/highland/cratered/boulder_field/rille); "
+                         "used by the flip-debug visualizer to overlay the heightmap.")
+    ap.add_argument("--debug_flip_every", type=int, default=10,
+                    help="Dump a flip-debug PNG at most every N flipped missions "
+                         "(set 0 to disable).")
     ap.add_argument("--log_path", default=None,
                     help="CSV log path (default: <checkpoint_dir>/training_log.csv)")
     args = ap.parse_args()
@@ -421,7 +512,8 @@ def main():
     # Env + preprocessor
     # ---------------------------------------------------------------
     print("[init] Connecting to ROS / Gazebo …")
-    env = RosJackalEnv(max_episode_steps=args.max_steps)
+    env = RosJackalEnv(max_episode_steps=args.max_steps,
+                        env_name=args.env_name)
     env.wait_ready(timeout=60.0)
     print("[init] Env ready.")
 
@@ -455,12 +547,17 @@ def main():
         min_episodes=3,
     )
 
+    resumed_dmax: Optional[float] = None
+    resumed_mission: int = 0
     if args.resume and Path(args.resume).exists():
         ck = torch.load(args.resume, map_location=device)
         model .load_state_dict(ck["model"])
         actor .load_state_dict(ck["actor"])
         critic.load_state_dict(ck["critic"])
-        print(f"[init] Resumed from {args.resume}")
+        resumed_dmax    = ck.get("goal_dist_max", None)
+        resumed_mission = int(ck.get("mission", 0) or 0)
+        print(f"[init] Resumed from {args.resume}  "
+              f"(mission={resumed_mission}, dmax={resumed_dmax})")
 
     # ---------------------------------------------------------------
     # CSV log
@@ -476,10 +573,40 @@ def main():
         ])
 
     # ---------------------------------------------------------------
-    # Curriculum state
+    # Flip-debug recorder — per-episode trace, dumped on flips
+    # ---------------------------------------------------------------
+    debug_rec: Optional[FlipDebugRecorder] = None
+    if args.debug_flip_every > 0:
+        debug_rec = FlipDebugRecorder(
+            env_name=args.env_name,
+            out_dir=Path(args.checkpoint_dir) / "flip_debug",
+            max_cache=20,
+        )
+        print(f"[init] flip_debug ON → {debug_rec.out_dir} (env={args.env_name}, "
+              f"every {args.debug_flip_every} flips)")
+    flipped_count = 0
+
+    # ---------------------------------------------------------------
+    # Curriculum state — restore from checkpoint, then optionally override
+    # via CLI. Without this restore, every resume reset dmax to 2 m and the
+    # curriculum had to climb from scratch each time.
     # ---------------------------------------------------------------
     goal_dist_max = INIT_GOAL_DIST
+    if resumed_dmax is not None:
+        goal_dist_max = float(resumed_dmax)
+    if args.start_dmax is not None:
+        goal_dist_max = float(args.start_dmax)
+        print(f"[init] curriculum override → dmax = {goal_dist_max:.1f} m")
+    goal_dist_max = max(INIT_GOAL_DIST, min(MAX_GOAL_DIST, goal_dist_max))
+    print(f"[init] starting dmax = {goal_dist_max:.1f} m  "
+          f"(min {INIT_GOAL_DIST}, max {MAX_GOAL_DIST})")
     success_hist: List[int] = []
+    # Best-mastered dmax: the highest goal_dist_max we've ever reached with
+    # success_rate > CURR_UP_TH. Used as the floor for curriculum-down so we
+    # don't shrink all the way to INIT after a transient collapse.
+    best_mastered_dmax: float = goal_dist_max
+    # Collapse detector: consecutive missions with reach=0.
+    collapse_streak: int = 0
 
     rng = np.random.default_rng(args.seed)
 
@@ -502,10 +629,16 @@ def main():
             mission += 1
 
             # -------- Pick a new goal (rotation) ---------------------------
-            # Uniform random point on an annulus [0.6*dmax, dmax], random bearing.
-            radius = float(rng.uniform(0.6 * goal_dist_max, goal_dist_max))
-            theta  = float(rng.uniform(-math.pi, math.pi))
-            goal = (radius * math.cos(theta), radius * math.sin(theta))
+            # Uniform on annulus [0.6*dmax, dmax], filtered through the
+            # traversability mask so we don't generate goals on steep slopes
+            # or inside boulder footprints (the rover would never reach them
+            # and the policy would think the env is broken).
+            goal = env.sample_drivable_goal(
+                rng,
+                max_dist=goal_dist_max,
+                origin=(0.0, 0.0),
+                min_dist=0.6 * goal_dist_max,
+            )
             spawn = (0.0, 0.0, float(rng.uniform(-math.pi, math.pi)))
 
             # Anneal actor usage
@@ -525,13 +658,51 @@ def main():
                 spawn=spawn, goal=goal,
                 max_steps=args.max_steps,
                 use_exploration=True,
-                explore_noise=max(0.1, 0.6 * (1.0 - frac)),
+                explore_noise=max(0.2, 0.6 * (1.0 - frac)),
                 use_actor_prob=use_actor_prob,
+                debug_rec=debug_rec,
+                debug_mission=mission,
             )
+
+            # Dump a visualization every Nth flipped episode so we can see
+            # *why* the rover tipped without drowning in PNGs.
+            if debug_rec is not None:
+                if going_info["flipped"]:
+                    flipped_count += 1
+                    if flipped_count % args.debug_flip_every == 1:
+                        out = debug_rec.dump(reason="flipped")
+                        if out is not None:
+                            print(f"[flip_debug] saved {out}")
+                debug_rec.clear()
 
             success_hist.append(1 if going_info["reached"] else 0)
             success_hist = success_hist[-CURR_WIN:]
             success_rate = float(np.mean(success_hist)) if success_hist else 0.0
+
+            # Collapse detector — bail rather than spending hours training on
+            # poisoned buffer data after the policy degenerates.
+            if going_info["reached"]:
+                collapse_streak = 0
+            else:
+                collapse_streak += 1
+            if collapse_streak >= COLLAPSE_REACH_WIN and COLLAPSE_AUTO_HALT:
+                crash_ckpt = (Path(args.checkpoint_dir)
+                              / f"ckpt_collapsed_m{mission:05d}.pt")
+                print(f"[collapse] reach=0 for {collapse_streak} missions — "
+                      f"saving crash state to {crash_ckpt} and halting. "
+                      f"Recover with: python3 scripts/reset_actor_head.py "
+                      f"--reset-critic --in <good_ckpt> --out <reset_ckpt>; "
+                      f"then ./run.sh --mode auto --resume <reset_ckpt>.")
+                torch.save({
+                    "model": model.state_dict(),
+                    "actor": actor.state_dict(),
+                    "critic": critic.state_dict(),
+                    "mission": mission,
+                    "goal_dist_max": goal_dist_max,
+                    "best_mastered_dmax": best_mastered_dmax,
+                    "collapse_streak": collapse_streak,
+                }, crash_ckpt)
+                stop_flag["v"] = True
 
             log.writerow([
                 mission, "going", going_info["steps"], f"{going_info['reward']:.3f}",
@@ -550,36 +721,31 @@ def main():
                   f"dmax={goal_dist_max:.1f}  succ={success_rate:.2f}")
 
             # -------- Push GOING to buffer ---------------------------------
-            ep_data = going.finalize()
-            if ep_data is not None:
-                buffer.add_episode(
-                    features  = ep_data["features"],
-                    actions   = ep_data["actions"],
-                    rewards   = ep_data["rewards"],
-                    continues = ep_data["continues"],
-                    goal_obs  = ep_data["goal_obs"],
-                )
+            _push_episode(buffer, going)
 
             # -------- HER relabel on failure -------------------------------
-            if (not going_info["reached"]) and len(going) > 4:
+            # Skip HER when the episode contained a flip: the path_xy list
+            # stitches together pre- and post-teleport poses, which makes the
+            # distance-shaping rewards garbage. Pushing those would reintroduce
+            # the same discontinuity we just removed.
+            if (not going_info["reached"]
+                and not going_info["flipped"]
+                and len(going) > 4):
                 final_xy = going.path_xy[-1]
                 if np.linalg.norm(final_xy) > 1.0:
                     her_ep = her_relabel(going, final_xy.astype(np.float32))
-                    her_data = her_ep.finalize()
-                    if her_data is not None:
-                        buffer.add_episode(
-                            features  = her_data["features"],
-                            actions   = her_data["actions"],
-                            rewards   = her_data["rewards"],
-                            continues = her_data["continues"],
-                            goal_obs  = her_data["goal_obs"],
-                        )
+                    _push_episode(buffer, her_ep)
 
             # -------- RETURNING phase --------------------------------------
             if going_info["reached"]:
                 home_xy = going_info["actual_spawn_xy"]
                 path = np.stack(going.path_xy, axis=0)
                 retrace = resample_path(path[::-1], RETURN_MIN_SPACING)
+
+                # Re-target the env's terminate-on-reach to home; otherwise
+                # step() sees us still at the going goal and ends the episode
+                # on step 1 (this was the "home=0 every time" bug).
+                env.set_goal((float(home_xy[0]), float(home_xy[1])))
 
                 # Last obs (position after reaching goal) → follow retrace.
                 obs = env._make_obs()
@@ -617,7 +783,9 @@ def main():
                     ret.features .append(feats_np)
                     ret.actions  .append(action)
                     ret.rewards  .append(float(reward))
-                    ret.continues.append(0.0 if terminated else 1.0)
+                    ret.continues.append(
+                        0.0 if (terminated or info.get("flipped")) else 1.0
+                    )
                     ret.goal_obs .append(g_obs)
                     ret.path_xy  .append(pose[:2].copy())
 
@@ -639,24 +807,26 @@ def main():
                 print(f"[m{mission:04d} return] steps={len(ret):3d} "
                       f"home={int(ret_reached)} flipped={int(ret_flipped)}")
 
-                ret_data = ret.finalize()
-                if ret_data is not None:
-                    buffer.add_episode(
-                        features  = ret_data["features"],
-                        actions   = ret_data["actions"],
-                        rewards   = ret_data["rewards"],
-                        continues = ret_data["continues"],
-                        goal_obs  = ret_data["goal_obs"],
-                    )
+                _push_episode(buffer, ret)
 
             # -------- Curriculum update ------------------------------------
             if len(success_hist) >= CURR_WIN:
                 if success_rate > CURR_UP_TH and goal_dist_max < MAX_GOAL_DIST:
                     goal_dist_max = min(MAX_GOAL_DIST, goal_dist_max + CURR_STEP_M)
-                    print(f"[curr] +{CURR_STEP_M} → dmax={goal_dist_max:.1f}")
+                    if goal_dist_max > best_mastered_dmax:
+                        best_mastered_dmax = goal_dist_max
+                    print(f"[curr] +{CURR_STEP_M} → dmax={goal_dist_max:.1f} "
+                          f"(best mastered={best_mastered_dmax:.1f})")
                 elif success_rate < CURR_DOWN_TH and goal_dist_max > INIT_GOAL_DIST:
-                    goal_dist_max = max(INIT_GOAL_DIST, goal_dist_max - CURR_STEP_M)
-                    print(f"[curr] -{CURR_STEP_M} → dmax={goal_dist_max:.1f}")
+                    # Hysteresis floor: never shrink below CURR_DOWN_FLOOR_RATIO
+                    # of best_mastered_dmax (but never below INIT either).
+                    floor = max(INIT_GOAL_DIST,
+                                CURR_DOWN_FLOOR_RATIO * best_mastered_dmax)
+                    new_dmax = max(floor, goal_dist_max - CURR_STEP_M)
+                    if new_dmax < goal_dist_max - 1e-6:
+                        goal_dist_max = new_dmax
+                        print(f"[curr] -{CURR_STEP_M} → dmax={goal_dist_max:.1f} "
+                              f"(floor={floor:.1f} from best={best_mastered_dmax:.1f})")
 
             # -------- Training ---------------------------------------------
             if buffer.ready() and mission % args.train_every_episodes == 0:

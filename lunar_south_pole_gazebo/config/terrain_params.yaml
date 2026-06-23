@@ -1,0 +1,29 @@
+# Procedural hazard generation parameters. LOLA at 20 m/px is much
+# coarser than rover-scale obstacles, so we sprinkle small SDF rocks
+# on top of the DEM mesh to give the policy something to avoid.
+
+rocks:
+  count: 50
+  # Radii are sampled uniformly from [min, max], metres.
+  min_radius_m: 0.05
+  max_radius_m: 0.40
+  # Placement is sampled uniformly inside [-half, +half] in X and Y,
+  # excluding a circle of radius `keepout_radius_m` around the rover
+  # spawn (at world origin).
+  half_extent_m: 800.0
+  keepout_radius_m: 5.0
+  # Deterministic seed for reproducibility.
+  seed: 20260604
+  # Visual material (RGBA).
+  ambient: [0.25, 0.22, 0.20, 1.0]
+  diffuse: [0.30, 0.27, 0.24, 1.0]
+
+# Small craters are box-with-negative-vertical-offset SDF approximations.
+# Set count: 0 to disable.
+craters:
+  count: 0
+  min_radius_m: 0.5
+  max_radius_m: 3.0
+  half_extent_m: 800.0
+  keepout_radius_m: 10.0
+  seed: 20260605

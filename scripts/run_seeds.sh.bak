@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# run_seeds.sh — run the champion CRATER config across multiple seeds for
+# the paper's main result. Does NOT mutate hyperparameters between iters.
+#
+# Usage:
+#   ./scripts/run_seeds.sh                      # default 5 seeds, 50 ep
+#   N_SEEDS=3 EPISODES_PER_ITER=100 TERRAIN=extreme ./scripts/run_seeds.sh
+#
+# Each seed runs in a fresh sim (cold restart) for ~5 hours wall-clock.
+# Results land in experiments/crater/iter_<N>/ with baseline_label seed_<S>.
+
+set -uo pipefail
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+N_SEEDS="${N_SEEDS:-5}"
+EPISODES_PER_ITER="${EPISODES_PER_ITER:-50}"
+TERRAIN="${TERRAIN:-rugged}"
+HEADLESS="${HEADLESS:-1}"
+SEEDS=(42 1337 2024 7 31415)
+
+log() { printf '\033[1;35m[seed_runner %s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*"; }
+
+trap 'log "stopping (signal)"; pkill -9 -f "auto_loop_v2.sh|train_crater_ros|gz sim" 2>/dev/null; exit 0' INT TERM
+
+for i in $(seq 0 $((N_SEEDS - 1))); do
+  SEED=${SEEDS[$i]}
+  log "=== SEED ${SEED} (run $((i+1))/$N_SEEDS) ==="
+
+  # Single iteration, no mutation: launch directly via run_baseline.sh
+  export SEED TERRAIN HEADLESS
+  export BASELINE=crater
+  # Champion knobs (iter 10 config)
+  unset BC_WEIGHT DREAMER_ACTOR_WEIGHT SUB_R_MAX RECOVERY_BC_WEIGHT TIMEOUT_PENALTY
+
+  # Force-labeled iter so we can group seeds in the results table.
+  echo "seed_${SEED}" > "$PROJECT_ROOT/experiments/crater/.next_label"
+
+  cd "$PROJECT_ROOT"
+  ./scripts/clean_and_train.sh > /tmp/train_lunar_launcher.log 2>&1 &
+  TRAIN_BG_PID=$!
+  disown $TRAIN_BG_PID
+  log "trainer launched in background; waiting for $EPISODES_PER_ITER episodes ..."
+
+  # Poll — strip newlines from count to avoid "integer expression" errors.
+  while true; do
+    sleep 45
+    count=$(grep -cE "=== Episode" /tmp/dreamer_train.log 2>/dev/null | tr -d '\n' || true)
+    count=${count:-0}
+    if ! pgrep -f "python3 scripts/train_crater_ros" > /dev/null 2>&1; then
+      log "trainer died at episode $count — moving to next seed"
+      break
+    fi
+    if [ "$count" -ge "$EPISODES_PER_ITER" ] 2>/dev/null; then
+      log "reached $count episodes — stopping seed $SEED"
+      break
+    fi
+  done
+
+  # Snapshot + analyze
+  iter_n=$(cat "$PROJECT_ROOT/experiments/crater/.current_iter" 2>/dev/null || echo "")
+  if [ -n "$iter_n" ]; then
+    iter_dir="$PROJECT_ROOT/experiments/crater/iter_${iter_n}"
+    cp -L /tmp/dreamer_train.log "$iter_dir/dreamer_train.log" 2>/dev/null
+    python3 "$PROJECT_ROOT/scripts/analyze_training.py" 2>&1 | tee "$iter_dir/analysis.txt"
+    # Save just the success rate + counts into metrics.json — reuse the
+    # auto_improve script's metric extraction, but discard the mutation.
+    python3 "$PROJECT_ROOT/scripts/auto_improve_iteration.py" > /dev/null 2>&1 || true
+  fi
+
+  # Cleanup before next seed
+  for p in train_crater_ros td_viewer train_lunar.sh gz_sim ruby.*gz_sim; do
+    pkill -9 -f "$p" 2>/dev/null || true
+  done
+  sleep 5
+done
+
+log "all $N_SEEDS seeds complete; building results table"
+python3 "$PROJECT_ROOT/scripts/build_results_table.py"

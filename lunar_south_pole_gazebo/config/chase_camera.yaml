@@ -1,0 +1,33 @@
+# Chase camera (racing-game third-person) — values consumed by the
+# rover SDF generator and by the chase_camera launch wrapper.
+#
+# The camera is attached as a child sensor of base_link in the rover
+# SDF. It therefore tracks pose rigidly (no interpolation code,
+# no extra spawn) — exactly the third-person behaviour the spec asks
+# for. The values below match section §E of the Phase-2 spec.
+
+offset:
+  x: -6.0    # metres behind base_link (rover's -X is behind)
+  y:  0.0
+  z:  3.0    # metres above base_link
+
+orientation:
+  # roll / pitch / yaw applied to the camera's frame after the offset.
+  # pitch +0.40 rad ≈ 23° downward.
+  roll:  0.0
+  pitch: 0.40
+  yaw:   0.0
+
+intrinsics:
+  horizontal_fov_rad: 1.396   # ≈ 80°
+  width_px:  640
+  height_px: 360
+  near_clip: 0.1
+  far_clip:  500.0
+
+update_rate_hz: 15            # modest rate keeps gz-sim heightmap LOD stable
+
+# Topic names — must match bridge_jazzy.yaml. Gz transport side is the
+# same string (absolute /-prefixed).
+ros_image_topic:        /lunar_jackal/chase_camera/image
+ros_camera_info_topic:  /lunar_jackal/chase_camera/camera_info

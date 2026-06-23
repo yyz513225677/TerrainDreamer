@@ -9,29 +9,47 @@ __pycache__/
 
 # --- Virtualenv ---
 venv/
+venv.*/
 env/
 .venv/
 
-# --- catkin build artefacts ---
+# --- catkin / ros build artefacts ---
 ros_ws/build/
 ros_ws/devel/
 ros_ws/install/
+ros_ws/log/
 ros_ws/logs/
 ros_ws/.catkin_workspace
+**/ros2_ws/build/
+**/ros2_ws/install/
+**/ros2_ws/log/
 
 # --- Training outputs ---
 checkpoints_auto/
-experiments/runs/
+experiments/
 runs/
+train.out*
 *.pt
 *.pth
 *.ckpt
 *.npz
 *.log
 
-# --- Generated Gazebo worlds (reproducible via generate_*.py) ---
+# --- Generated Gazebo worlds + heightmaps (reproducible via build_*.py) ---
 ros_ws/src/terrain_dreamer_bringup/worlds/*.world
 ros_ws/src/terrain_dreamer_bringup/worlds/heightmaps/*.png
+lunar_south_pole_gazebo/data/
+lunar_south_pole_gazebo/outputs/
+
+# --- Paper (not uploaded to public repo per user request) ---
+paper/
+
+# --- System / environment snapshots ---
+snapshots/
+
+# --- JS / dashboard build artefacts ---
+**/node_modules/
+**/dashboard/dist/
 
 # --- OS / editor / tool state ---
 .DS_Store

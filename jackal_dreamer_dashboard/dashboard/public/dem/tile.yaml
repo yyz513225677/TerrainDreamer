@@ -1,0 +1,11 @@
+source_dem: data/processed_dem/south_pole_tile_filled.tif
+heightmap_png: data/heightmaps/south_pole_heightmap.png
+tile_width_m: 200000.0
+tile_height_m: 200000.0
+samples_x: 1025
+samples_y: 1025
+min_elevation_m: -4377.2333984375
+max_elevation_m: 2707.06884765625
+vertical_scale_m: 7084.30224609375
+horizontal_resolution_m_per_pixel: 195.1219512195122
+generated_time: '2026-06-04T17:07:28Z'

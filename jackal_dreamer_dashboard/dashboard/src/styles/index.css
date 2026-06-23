@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background-color: #0b0d10;
+  color: #e3e8ee;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+@layer components {
+  .panel-header {
+    @apply text-header font-sans font-semibold uppercase text-text-muted;
+    letter-spacing: 0.14em;
+  }
+
+  .panel {
+    @apply bg-bg-panel border border-border-subtle;
+  }
+
+  .panel-raised {
+    @apply bg-bg-raised border border-border-subtle;
+  }
+
+  .metric-num {
+    @apply font-mono text-metric text-text-primary;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .metric-label {
+    @apply font-sans text-label text-text-muted uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .pill {
+    @apply font-mono text-pill font-semibold px-2 py-[2px] border;
+  }
+
+  .btn {
+    @apply font-mono text-pill font-semibold uppercase px-3 py-1 border border-border-subtle
+           bg-bg-raised text-text-primary tracking-wider
+           hover:border-border-strong hover:bg-[#222831]
+           active:bg-[#2b323b]
+           disabled:opacity-40 disabled:cursor-not-allowed
+           transition-colors;
+    letter-spacing: 0.08em;
+  }
+
+  .btn-danger {
+    @apply border-accent-danger text-accent-danger hover:bg-accent-danger/10;
+  }
+
+  .btn-ok {
+    @apply border-accent-ok text-accent-ok hover:bg-accent-ok/10;
+  }
+
+  .btn-active {
+    @apply bg-accent-dreamer/10 border-accent-dreamer text-accent-dreamer;
+  }
+
+  .input-field {
+    @apply bg-bg-base border border-border-subtle text-text-primary text-label
+           font-mono px-2 py-1 focus:border-accent-dreamer focus:outline-none;
+  }
+}
+
+/* Subtle scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0b0d10;
+}
+::-webkit-scrollbar-thumb {
+  background: #252b33;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4350;
+}
+
+/* E-STOP latched overlay */
+.estop-shroud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 3px #ef4444;
+  z-index: 50;
+  animation: estop-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes estop-pulse {
+  0%, 100% {
+    box-shadow: inset 0 0 0 3px #ef4444;
+  }
+  50% {
+    box-shadow: inset 0 0 0 3px #ef444466;
+  }
+}

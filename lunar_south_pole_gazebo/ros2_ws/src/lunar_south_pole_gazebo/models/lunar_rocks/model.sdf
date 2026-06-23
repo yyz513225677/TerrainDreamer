@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!--
+  Empty rocks model — placeholder until
+  scripts/generate_procedural_hazards.py is run.
+-->
+<sdf version="1.10">
+  <model name="lunar_rocks">
+    <static>false</static>
+  </model>
+</sdf>

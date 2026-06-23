@@ -1,0 +1,22 @@
+# Default DEM pipeline configuration. Scripts read these as
+# fallbacks when their CLI arguments are not provided.
+
+raw_dem_path: data/raw_dem/LDEM_80S_20MPP_ADJ.TIF
+processed_dem_path: data/processed_dem/shackleton_tile.tif
+heightmap_png_path: data/heightmaps/shackleton_heightmap.png
+metadata_yaml_path: data/metadata/shackleton_tile.yaml
+
+# Crop defaults — center coordinates are intentionally null. The user
+# must either supply --center-x/--center-y on the CLI or use the QGIS
+# workflow. We do NOT invent Shackleton coordinates.
+crop:
+  center_x: null
+  center_y: null
+  size_meters: 2048
+  samples: 1025
+
+# Normalisation. 0,100 = use min/max of the cropped tile as-is.
+normalize:
+  clip_percentile_lo: 0.0
+  clip_percentile_hi: 100.0
+  png_bits: 16

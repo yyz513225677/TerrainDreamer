@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<sdf version="1.10">
+  <world name="lunar_south_pole">
+    <physics name="moon" type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+
+    <gravity>0 0 -1.62</gravity>
+    <atmosphere type="adiabatic"/>
+
+    <!-- GUI camera + scene parameters are set via the gz-sim
+         gui-config flag so the default toolbar, entity tree, and
+         interactive view control all remain functional. See
+         ros2_ws/src/.../gui/gui.config. -->
+
+    <scene>
+      <ambient>0.18 0.18 0.20 1</ambient>
+      <background>0.01 0.01 0.03 1</background>
+      <grid>false</grid>
+      <shadows>true</shadows>
+    </scene>
+
+    <!-- Low-elevation solar light, characteristic of the lunar south pole. -->
+    <light type="directional" name="sun">
+      <pose>0 0 1500 0 0 0</pose>
+      <direction>-0.6 -0.3 -0.4</direction>
+      <diffuse>1 0.97 0.92 1</diffuse>
+      <specular>0.5 0.5 0.5 1</specular>
+      <cast_shadows>true</cast_shadows>
+    </light>
+
+    <include>
+      <uri>model://lunar_dem_terrain</uri>
+      <pose>0 0 0.0 0 0 0</pose>
+    </include>
+
+    
+  </world>
+</sdf>

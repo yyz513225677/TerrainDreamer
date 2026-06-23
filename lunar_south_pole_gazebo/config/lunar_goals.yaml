@@ -1,0 +1,67 @@
+# Goals on the lunar DEM map. Loaded by goal_marker_node + goal_status_node.
+#
+# Coordinates are in the world frame the rover sees (metres). The
+# Phase-1 DEM tile is displayed scaled to 10 km × 10 km centred at
+# (0,0,0) with terrain reaching z ≈ 354 m. The goal markers below are
+# scattered across the tile within the rover's reachable area.
+#
+# Z values are above the world floor; the actual ground elevation at
+# each (x,y) is dictated by the heightmap, so beacons are made tall
+# enough (height_m) to be visible even where the terrain rises.
+
+active_goal_id: goal_01_start_ridge   # initial goal sent to goal_status_node
+
+# Marker visual defaults — overridable per-goal
+defaults:
+  beacon_radius_m: 0.4
+  beacon_height_m: 25.0
+  text_height_m: 6.0
+  arrival_radius_m: 3.0
+
+goals:
+  # Tight curriculum: all goals within 15 m of spawn, large arrival
+  # radii so reach reward triggers easily and shaping signal is dense.
+  - goal_id: goal_01_start_ridge
+    name: Start ridge
+    description: Closest reach goal — immediate forward target.
+    x: 3.0
+    y: 0.0
+    z: 0.0
+    arrival_radius_m: 1.5
+    color: [1.0, 0.85, 0.10, 1.0]   # bright amber
+
+  - goal_id: goal_02_crater_rim
+    name: Crater rim
+    description: Diagonal forward-right.
+    x: 6.0
+    y: 6.0
+    z: 0.0
+    arrival_radius_m: 1.5
+    color: [0.95, 0.40, 0.20, 1.0]  # orange
+
+  - goal_id: goal_03_safe_basin
+    name: Safe basin
+    description: Lateral left.
+    x: 0.0
+    y: 8.0
+    z: 0.0
+    arrival_radius_m: 1.5
+    color: [0.10, 0.85, 0.45, 1.0]  # green
+
+  - goal_id: goal_04_shadow_edge
+    name: Shadow edge
+    description: Diagonal back-left.
+    x: -5.0
+    y: 4.0
+    z: 0.0
+    arrival_radius_m: 1.5
+    color: [0.25, 0.55, 0.95, 1.0]  # blue
+
+  - goal_id: goal_05_return_base
+    name: Return base
+    description: Back to start zone.
+    x: 0.0
+    y: -3.0
+    z: 0.0
+    arrival_radius_m: 1.5
+    color: [0.90, 0.20, 0.30, 1.0]  # red

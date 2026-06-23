@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<sdf version="1.10">
+  <model name="lunar_dem_terrain">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision">
+        <geometry>
+          <heightmap>
+            <uri>file:///home/rickslab3/Documents/Leo/terrain_dreamer/lunar_south_pole_gazebo/data/heightmaps/landscape_heightmap.png</uri>
+            <size>100 100 4</size>
+            <pos>0 0 0</pos>
+            <sampling>1</sampling>
+          </heightmap>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <heightmap>
+            <uri>file:///home/rickslab3/Documents/Leo/terrain_dreamer/lunar_south_pole_gazebo/data/heightmaps/landscape_heightmap.png</uri>
+            <size>100 100 4</size>
+            <pos>0 0 0</pos>
+            <sampling>1</sampling>
+            <texture>
+              <size>100</size>
+              <diffuse>file:///home/rickslab3/Documents/Leo/terrain_dreamer/lunar_south_pole_gazebo/data/heightmaps/landscape_color.png</diffuse>
+              <normal>file:///home/rickslab3/Documents/Leo/terrain_dreamer/lunar_south_pole_gazebo/data/heightmaps/landscape_heightmap.png</normal>
+            </texture>
+          </heightmap>
+        </geometry>
+        <material>
+          <ambient>0.75 0.75 0.75 1</ambient>
+          <diffuse>1.0 1.0 1.0 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

@@ -1,13 +1,17 @@
 # TerrainDreamer — Python runtime deps
 # ====================================
-# System deps (ROS Noetic, Gazebo Classic 11, Jackal simulator, Velodyne plugin,
-# xvfb) are installed via apt. See README.md → Environment.
+# System deps (ROS 2 Jazzy, Gazebo Sim "Harmonic", ros_gz bridge, xvfb) are
+# installed via apt. See README.md → Environment.
+#
+# rclpy and the ROS 2 message types ship with apt's `ros-jazzy-*` packages —
+# they live in /opt/ros/jazzy and are imported via `source setup.bash`, not
+# pip-installed. Do NOT add rclpy / sensor-msgs / geometry-msgs here.
 
 # Core numeric / IO
 numpy>=1.24.0,<2.0      # pinned <2 to stay compatible with torch 2.3.1 ABI
 scipy>=1.10.0
 pyyaml>=6.0
-pillow>=10.0.0           # PNG heightmaps (ros_ws/.../generate_heightmaps.py)
+pillow>=10.0.0           # PNG heightmaps (scripts/build_varied_world.py)
 
 # Deep learning — CUDA 12.1 wheels
 # pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121
@@ -20,11 +24,7 @@ gymnasium>=0.29.0
 tqdm>=4.65.0
 tensorboard>=2.12.0
 
-# ROS 1 Python bridge — rospy ships with ROS Noetic (apt), but these
-# pure-Python companions must live inside the venv for rospy to import.
-rospkg>=1.5
-catkin-pkg>=1.0
-empy>=3.3.4
-defusedxml>=0.7
-netifaces>=0.11
-pycryptodomex>=3.20
+# UI / viz
+matplotlib>=3.7
+pynput>=1.7             # global keyboard capture for run_human.sh — keys
+                         # work regardless of which window has focus.

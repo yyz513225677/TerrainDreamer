@@ -42,7 +42,11 @@ class DreamerActor(nn.Module):
         action_dim: int = 2,
         hidden: int = 256,
         init_std: float = 0.5,
-        min_std: float = 0.05,
+        min_std: float = 0.12,        # was 0.05 — too small, actor variance
+                                      # collapsed and policy froze at (0,0).
+        forward_bias: float = 0.4,    # bias the linear-vel mean toward forward
+                                      # at init so the policy explores motion
+                                      # rather than the freeze equilibrium.
     ):
         super().__init__()
         self.action_dim = action_dim
@@ -56,9 +60,15 @@ class DreamerActor(nn.Module):
         self.mean_head   = nn.Linear(hidden, action_dim)
         self.log_std_head = nn.Linear(hidden, action_dim)
 
-        # Init output weights small so early actions are near zero
+        # Init output weights small so early actions are near zero, BUT bias
+        # the linear-vel head forward — without this, a fresh / reset actor
+        # outputs (0,0), which is also the local optimum under the step
+        # penalty, and training never escapes.
         nn.init.uniform_(self.mean_head.weight,   -0.01, 0.01)
-        nn.init.zeros_(self.mean_head.bias)
+        bias = torch.zeros(action_dim)
+        bias[0] = float(forward_bias)            # tanh(0.4) ≈ 0.38 forward
+        with torch.no_grad():
+            self.mean_head.bias.copy_(bias)
         nn.init.constant_(self.log_std_head.bias, float(init_std))
 
     def forward(
@@ -168,7 +178,7 @@ def imagine_train(
     gamma: float = 0.99,
     lam:   float = 0.95,
     entropy_scale: float = 3e-4,
-    grad_clip: float = 100.0,
+    grad_clip: float = 10.0,
 ) -> Dict[str, float]:
     """
     Imagination-based behavior learning (DreamerV3 Section 2.4).
@@ -276,11 +286,22 @@ def imagine_train(
     act_means = torch.stack(act_means, dim=0)   # [H, BT, action_dim]
     act_stds  = torch.stack(act_stds,  dim=0)
 
-    # Policy gradient: maximise returns
+    # Policy gradient: maximise advantage (returns - baseline).
+    # DreamerV3-style normalization: subtract critic baseline (already in
+    # `vals`), then scale by the inter-percentile range so the gradient stays
+    # alive when imagined-return variance collapses (the failure mode that
+    # froze the actor at ~9e-4 loss for 500 missions). Z-score normalization
+    # divides by std → with low-variance imagined returns the 1e-8 floor
+    # dominates and the per-batch mean of `log_prob * noise` ≈ 0.
+    adv = (targets - vals).detach()                              # [H, BT]
+    s95 = torch.quantile(adv, 0.95)
+    s05 = torch.quantile(adv, 0.05)
+    adv_scale = torch.clamp(s95 - s05, min=1.0)
+    adv_norm  = adv / adv_scale
+
     dist = torch.distributions.Normal(act_means, act_stds)
-    log_probs = dist.log_prob(actions.detach()).sum(-1)    # [H, BT]
-    norm_targets = (targets - targets.mean()) / (targets.std() + 1e-8)
-    actor_loss_pg = -(log_probs * norm_targets).mean()
+    log_probs = dist.log_prob(actions.detach()).sum(-1)          # [H, BT]
+    actor_loss_pg = -(log_probs * adv_norm).mean()
 
     # Entropy regularisation: keep policy from collapsing
     entropy = dist.entropy().sum(-1).mean()

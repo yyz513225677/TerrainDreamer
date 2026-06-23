@@ -1,0 +1,11 @@
+float32 wm_loss
+float32 actor_loss
+float32 critic_loss
+float32 bc_loss
+uint32  buffer_size
+float32 human_ratio
+float32 reward_est
+float32 value_est
+float32 uncertainty_est
+float32 action_linear
+float32 action_angular

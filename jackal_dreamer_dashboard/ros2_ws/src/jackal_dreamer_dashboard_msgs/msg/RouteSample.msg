@@ -1,0 +1,14 @@
+builtin_interfaces/Time stamp
+string route_id
+string operator_id
+string environment_id
+geometry_msgs/Pose2D pose
+geometry_msgs/Twist odom
+geometry_msgs/Vector3 imu_rpy
+geometry_msgs/Vector3 imu_angvel
+geometry_msgs/Vector3 imu_linacc
+string  lidar_ref
+geometry_msgs/Twist action
+bool    collision
+float32 reward_est
+float32 priority
