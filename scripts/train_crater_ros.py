@@ -316,9 +316,9 @@ class CraterTrainNode(Node):
         #   phase B: pure rotate ±0.8, 20 steps (2 s ≈ 90°)
         #   phase C: drive forward, 35 steps (3.5 s) — actually translate
         # Total 65 steps / 6.5 s. After phase C we enter a 50-step (5 s)
-        # "blackout" window where stuck detection cannot re-arm; this
+        # "cooldown" window where stuck detection cannot re-arm; this
         # gives BASE time to make goal progress.
-        self._recovery_phase = 0        # 0 = inactive, 1=rev, 2=rot, 3=fwd, 4=blackout
+        self._recovery_phase = 0        # 0 = inactive, 1=rev, 2=rot, 3=fwd, 4=cooldown
         self._recovery_step = 0
         # Post-stuck commit: after escaping a stuck zone, drive straight
         # ahead for this many control steps before re-engaging goal-seeking
@@ -1503,7 +1503,7 @@ class CraterTrainNode(Node):
     def _stuck_recovery_cmd(self):
         """Scripted recovery — runs as a fixed phase sequence; the caller
         only invokes us while ``_recovery_phase != 0``. Phase transitions
-        are driven by ``_recovery_step``; once phase 4 (blackout) ends,
+        are driven by ``_recovery_step``; once phase 4 (cooldown) ends,
         we set phase=0 and the rover returns to BASE.
         Direction is locked per recovery event (alternates with the
         previous one so the rover doesn't repeatedly try the same side).
@@ -1549,7 +1549,7 @@ class CraterTrainNode(Node):
                 step = 0
         if phase == 3:
             return np.array([0.4, 0.0], dtype=np.float32)
-        # Phase D — blackout (no override, but stuck detection frozen).
+        # Phase D — cooldown (no override, but stuck detection frozen).
         # We just publish BASE-equivalent zeros; the caller will fall
         # through to BASE actor cmd via priority arbitration.
         return None
@@ -1800,13 +1800,13 @@ class CraterTrainNode(Node):
                     cmd = self._stuck_recovery_cmd()
                     self._recovery_step += 1
                     if cmd is None:
-                        # Phase 4 blackout: yield to BASE but freeze stuck/
-                        # ON_SLOPE re-trigger for the blackout duration.
+                        # Phase 4 cooldown: yield to BASE but freeze stuck/
+                        # ON_SLOPE re-trigger for the cooldown duration.
                         if self._recovery_step >= 50:
                             self._recovery_phase = 0
                             self._recovery_step = 0
                             self._stuck_recovery_dir = 0.0
-                        self._interrupt_label = "RECOVERY_BLACKOUT"
+                        self._interrupt_label = "RECOVERY_COOLDOWN"
                     else:
                         cmd_action_np = cmd
                         self._interrupt_label = f"STUCK_PHASE{self._recovery_phase}"

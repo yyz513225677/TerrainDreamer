@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle, Arc
 from PIL import Image
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -35,6 +36,9 @@ GROUPS = {
     "Rugged (TD-full)":    [128, 130, 132, 134, 136],
     "Extreme (TD-full)":   [104, 107, 109, 111, 113],
     "Extreme (B1)":        [138, 140, 142, 144, 146],
+    "Extreme (A1)":        [148, 150, 152, 154, 156],
+    "Extreme (A2)":        [158, 160, 162, 164, 166],
+    "Extreme (A3)":        [168, 170, 172, 174, 176],
 }
 
 GROUP_COLOR = {
@@ -42,7 +46,16 @@ GROUP_COLOR = {
     "Rugged (TD-full)":    "#2ca56b",
     "Extreme (TD-full)":   "#d24",
     "Extreme (B1)":        "#888",
+    "Extreme (A1)":        "#a44",
+    "Extreme (A2)":        "#c66",
+    "Extreme (A3)":        "#e88",
 }
+
+# Subsets used by individual figures
+GROUPS_TERRAINS  = ["Landscape (TD-full)", "Rugged (TD-full)",
+                    "Extreme (TD-full)"]
+GROUPS_ABLATION  = ["Extreme (TD-full)", "Extreme (B1)",
+                    "Extreme (A1)", "Extreme (A2)", "Extreme (A3)"]
 
 
 def load_metrics(it):
@@ -198,7 +211,8 @@ def figure_training_curves():
         ax.tick_params(axis="both", labelsize=13)
         ax.grid(alpha=0.3)
 
-    fig.suptitle(f"Training curves — extreme terrain, iter\\_{chosen}",
+    fig.suptitle("Representative TerrainDreamer training dynamics "
+                 "on the extreme terrain",
                  fontsize=20, y=0.99)
     plt.tight_layout(rect=[0, 0, 1, 0.94])
     out = FIGS / "training_curves.png"
@@ -210,12 +224,14 @@ def figure_training_curves():
 # ── 4. Success per seed (grouped by terrain / config) ─────────────────────
 def figure_success_per_seed():
     """Grouped bar chart: each seed (x) has bars for each terrain group.
-    X axis is the seed ID (meaningful), not iter index.
-    Layout: legend below the plot (no overlap with bars), large fonts."""
+    Shows the three TerrainDreamer-full terrains plus the B1 baseline on
+    extreme. (Full ablation set lives in ablation_summary.)"""
+    show = ["Landscape (TD-full)", "Rugged (TD-full)",
+            "Extreme (TD-full)",   "Extreme (B1)"]
     group_succ = {}
-    for g, iters in GROUPS.items():
+    for g in show:
         srs = []
-        for it in iters:
+        for it in GROUPS[g]:
             m = load_metrics(it)
             srs.append(m["success_rate"] if m else None)
         group_succ[g] = srs
@@ -330,10 +346,146 @@ def figure_failure_breakdown():
     print(f"saved {out}")
 
 
+# ── 6. Ablation summary (mean ± std for 5 extreme configs) ────────────────
+def figure_ablation_summary():
+    """Bar chart of mean ± std for the 5 extreme-terrain configurations
+    (TD-full, B1, A1, A2, A3). Used in the ablation section of the paper."""
+    import statistics as st
+    order = ["Extreme (TD-full)", "Extreme (B1)",
+             "Extreme (A1)", "Extreme (A2)", "Extreme (A3)"]
+    short_label = {
+        "Extreme (TD-full)": "TD-full",
+        "Extreme (B1)":      "B1\nvanilla",
+        "Extreme (A1)":      "A1\n$-$interrupts",
+        "Extreme (A2)":      "A2\n$-$distillation",
+        "Extreme (A3)":      "A3\n$-$demo anchor",
+    }
+    means, stds, per_seed = [], [], []
+    for g in order:
+        srs = []
+        for it in GROUPS[g]:
+            m = load_metrics(it)
+            if m is not None:
+                srs.append(m["success_rate"])
+        means.append(sum(srs)/len(srs) if srs else 0)
+        stds.append(st.stdev(srs) if len(srs) > 1 else 0)
+        per_seed.append(srs)
+
+    x = np.arange(len(order))
+    # Single-column aspect: taller than wide so text stays readable
+    # when scaled to \columnwidth (~8.5 cm) in IEEE two-column layout.
+    fig, ax = plt.subplots(figsize=(7.5, 6.5))
+    bars = ax.bar(x, means, yerr=stds, width=0.62,
+                  color=[GROUP_COLOR[g] for g in order],
+                  edgecolor="black", linewidth=0.5, alpha=0.92,
+                  error_kw={"lw": 1.2, "capsize": 4, "capthick": 1.1})
+    # value labels above each bar — generous offset above error-bar cap
+    for b, m, s in zip(bars, means, stds):
+        ax.text(b.get_x() + b.get_width()/2.0, m + s + 3.0,
+                f"{m:.1f}$\\pm${s:.1f}",
+                ha="center", va="bottom",
+                fontsize=10, fontweight="bold")
+    # individual seed dots
+    for xi, srs in zip(x, per_seed):
+        ax.scatter([xi]*len(srs), srs, color="black", s=14, zorder=3,
+                   alpha=0.55, edgecolor="white", linewidth=0.4)
+
+    # Full-config reference line.
+    ax.axhline(means[0], ls="--", color="black", alpha=0.35, lw=0.9,
+               zorder=1)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([short_label[g] for g in order], fontsize=10)
+    ax.tick_params(axis="y", labelsize=10)
+    ax.set_ylabel("Success rate [%]", fontsize=11)
+    ax.set_ylim(0, 105)                     # headroom for value labels
+    ax.set_title("Ablation on extreme terrain "
+                 "(5 seeds, mean $\\pm$ std)",
+                 fontsize=12, pad=10)
+    ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout(rect=[0, 0.02, 1, 0.97])  # extra top + bottom margin
+    out = FIGS / "ablation_summary.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"saved {out}")
+
+
+# ── 7. Hierarchical action space + P-controller (was a TikZ figure) ───────
+def figure_action_space():
+    """Render the C2 action-space schematic as a PNG so the paper needs no
+    TikZ/pgf (pgf's random-math load crashes under some TeX Live builds).
+    Left: signed polar sub-goal; right: fixed P-controller pipeline."""
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(11, 4.6),
+                                   gridspec_kw={"width_ratios": [1, 1.15]})
+
+    # ---- Left: polar action space ----
+    axL.set_title("Action space", fontsize=15, fontweight="bold", pad=6)
+    axL.axhline(0, color="black", lw=1.0)
+    axL.axvline(0, color="black", lw=1.0)
+    axL.annotate("", xy=(2.05, 0), xytext=(-2.05, 0),
+                 arrowprops=dict(arrowstyle="->", color="black", lw=1.0))
+    axL.annotate("", xy=(0, 2.35), xytext=(0, -1.6),
+                 arrowprops=dict(arrowstyle="->", color="black", lw=1.0))
+    axL.text(2.05, -0.28, "$x$", fontsize=12)
+    axL.text(0.12, 2.28, "$y$", fontsize=12)
+    # forward sub-goal (blue)
+    axL.annotate("", xy=(1.2, 1.6), xytext=(0, 0),
+                 arrowprops=dict(arrowstyle="-|>", color="#1f57d6", lw=2.4))
+    axL.text(0.55, 1.35, r"$r_{\mathrm{sub}}>0$", color="#1f57d6",
+             fontsize=11, ha="right")
+    # theta arc
+    axL.add_patch(Arc((0, 0), 1.1, 1.1, angle=0, theta1=0, theta2=53,
+                      color="#1f57d6", ls="--", lw=1.1))
+    axL.text(0.86, 0.24, r"$\theta_{\mathrm{sub}}$", color="#1f57d6",
+             fontsize=11)
+    # reverse sub-goal (red)
+    axL.annotate("", xy=(-0.9, -1.1), xytext=(0, 0),
+                 arrowprops=dict(arrowstyle="-|>", color="#d62728", lw=2.4))
+    axL.text(-0.85, -1.28, r"$r_{\mathrm{sub}}<0$", color="#d62728",
+             fontsize=11, ha="left")
+    # robot body
+    axL.add_patch(Rectangle((-0.18, -0.10), 0.36, 0.20,
+                            facecolor="0.7", edgecolor="black", zorder=5))
+    axL.set_xlim(-2.3, 2.3); axL.set_ylim(-1.8, 2.6)
+    axL.set_aspect("equal"); axL.axis("off")
+
+    # ---- Right: P-controller pipeline ----
+    axR.set_title("Low-level controller", fontsize=15, fontweight="bold",
+                  pad=6)
+    def box(ax, xy, w, h, text, fc, fs=12):
+        ax.add_patch(FancyBboxPatch((xy[0]-w/2, xy[1]-h/2), w, h,
+                     boxstyle="round,pad=0.02,rounding_size=0.08",
+                     facecolor=fc, edgecolor="black", lw=1.0, zorder=3))
+        ax.text(xy[0], xy[1], text, ha="center", va="center",
+                fontsize=fs, zorder=4)
+    box(axR, (0.5, 2.3), 0.72, 0.5,
+        r"$(\theta_{\mathrm{sub}},\,r_{\mathrm{sub}})$", "#fdeaa8")
+    box(axR, (0.5, 1.25), 0.98, 0.62,
+        r"$\omega=\mathrm{clip}(k_p\theta_{\mathrm{sub}})$" "\n"
+        r"$v=\mathrm{sign}(r_{\mathrm{sub}})\,v_{\max}\cos\theta_{\mathrm{sub}}$",
+        "#fbd9a6", fs=11)
+    box(axR, (0.5, 0.2), 0.98, 0.5,
+        r"TwistStamped $(v,\,\omega)$", "#cde7c8")
+    for y0, y1 in [(2.05, 1.56), (0.94, 0.45)]:
+        axR.annotate("", xy=(0.5, y1), xytext=(0.5, y0),
+                     arrowprops=dict(arrowstyle="-|>", color="black", lw=1.4))
+    axR.set_xlim(-0.1, 1.1); axR.set_ylim(-0.15, 2.75)
+    axR.axis("off")
+
+    plt.tight_layout()
+    out = FIGS / "action_space.png"
+    plt.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f"saved {out}")
+
+
 if __name__ == "__main__":
     figure_terrains()
     figure_obstacle_masks()
     figure_training_curves()
     figure_success_per_seed()
     figure_failure_breakdown()
+    figure_ablation_summary()
+    figure_action_space()
     print(f"\nAll figures saved to {FIGS}")
